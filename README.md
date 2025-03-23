@@ -14,10 +14,11 @@ arXtrend is an intelligent agent that analyzes research trends from arXiv papers
 ### Option 1: Running with Docker (Recommended)
 
 1. Install Docker and Docker Compose
-2. Install NVIDIA Container Toolkit (for GPU support):
+
+2. Host model with Ollama
+
    ```bash
-   # For Windows, install NVIDIA Container Toolkit from:
-   # https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html#docker
+   ollama run mistral:7b
    ```
 
 3. Build and run the application:
@@ -29,6 +30,20 @@ arXtrend is an intelligent agent that analyzes research trends from arXiv papers
    - Frontend: http://localhost:3000
    - Backend API: http://localhost:8000
    - Ollama API: http://localhost:11434
+
+5. Test Backend api
+
+   ```
+   curl -X POST \
+   http://localhost:8000/analyze \
+   -H 'Content-Type: application/json' \
+   -d '{
+      "topic": "large language models",
+      "max_papers": 50,
+      "start_date": "2023-01-01T00:00:00Z",
+      "end_date": "2024-03-01T00:00:00Z"
+   }'
+   ```
 
 ### Option 2: Manual Setup
 
@@ -57,14 +72,11 @@ arXtrend/
 ├── app/
 │   ├── main.py              # FastAPI application
 │   ├── agents/              # LangGraph agents
-│   ├── models/              # Data models
-│   ├── services/            # Business logic
-│   └── utils/               # Utility functions
+│   └── models/              # FastAPI Data models
 ├── frontend/               # React frontend
 ├── Dockerfile.backend      # Backend Dockerfile
 ├── Dockerfile.frontend     # Frontend Dockerfile
-├── docker-compose.yml      # Docker Compose configuration
-└── requirements.txt        # Python dependencies
+└── docker-compose.yml      # Docker Compose configuration
 ```
 
 ## Technologies Used
