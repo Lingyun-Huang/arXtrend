@@ -1,0 +1,27 @@
+FROM node:16.20-alpine
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apk add --no-cache python3 make g++ git
+
+# Copy package files
+COPY frontend/package*.json ./
+
+# Install dependencies
+RUN npm install --legacy-peer-deps
+
+# Copy the rest of the frontend application
+COPY frontend/ .
+
+# Build the application
+RUN npm run build
+
+# Install serve to run the application
+RUN npm install -g serve
+
+# Expose the port the app runs on
+EXPOSE 3000
+
+# Command to run the application
+CMD ["serve", "-s", "build", "-l", "3000"] 

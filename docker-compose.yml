@@ -1,0 +1,33 @@
+version: '3.8'
+
+networks:
+  app-network:
+    driver: bridge
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8000:8000"
+    environment:
+      - OLLAMA_HOST=http://host.docker.internal:11434
+    networks:
+      - app-network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://backend:8000
+    # depends_on:
+    #   - backend
+    networks:
+      - app-network
+
+volumes:
+  ollama_data: 
