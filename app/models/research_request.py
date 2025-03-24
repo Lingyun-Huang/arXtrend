@@ -28,4 +28,5 @@ class ResearchResponse(BaseModel):
     top_keywords: List[str]
     papers: List[PaperInfo]
     trend_summary: str
-    time_period: str 
+    time_period: str
+    research_evolution: str 

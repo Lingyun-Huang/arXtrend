@@ -28,4 +28,5 @@ export interface ResearchResponse {
     papers: Paper[];
     trend_summary: string;
     time_period: string;
+    research_evolution?: string;
 } 
