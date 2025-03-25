@@ -74,6 +74,13 @@ export const ResearchResults: React.FC<ResearchResultsProps> = ({ results }) => 
         xaxis: { title: 'Date' },
         yaxis: { title: 'Frequency' },
         height: 500,
+        legend: {
+            orientation: 'h',  // Moves legend to the bottom
+            x: 0.5,            // Centers the legend
+            y: -0.2,           // Moves it below the chart
+            xanchor: 'center',
+            yanchor: 'top'
+        },
     };
 
     const formatDate = (dateString: string) => {
@@ -137,7 +144,7 @@ export const ResearchResults: React.FC<ResearchResultsProps> = ({ results }) => 
                 </Paper>
             )}
 
-            <Paper elevation={3} sx={{ p: 3, mb: 3 }}>
+            <Paper elevation={3} sx={{ p: 3, mb: 3, width: '100%'}}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                     <Typography variant="h5">
                         Keyword Trends
@@ -190,6 +197,16 @@ export const ResearchResults: React.FC<ResearchResultsProps> = ({ results }) => 
                                         </Typography>
                                         <br />
                                         {paper.abstract}
+                                        <Box sx={{ mt: 1 }}>
+                                            {paper.keywords?.map((keyword, kidx) => (
+                                                <Chip
+                                                    key={kidx}
+                                                    label={keyword}
+                                                    size="small"
+                                                    sx={{ mr: 0.5, mb: 0.5 }}
+                                                />
+                                            ))}
+                                        </Box>
                                     </>
                                 }
                             />

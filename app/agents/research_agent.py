@@ -1,16 +1,14 @@
 import os
-import requests
+import aiohttp
 from typing import Dict, List
 from datetime import datetime
 import arxiv
-from keybert import KeyBERT
 import pandas as pd
 from collections import Counter
 from langgraph.graph import StateGraph
 from typing_extensions import TypedDict
-from sklearn.feature_extraction.text import CountVectorizer
-import re
 from itertools import combinations
+import re
 
 
 class State(TypedDict):
@@ -23,27 +21,26 @@ class State(TypedDict):
     trend_summary: str
     time_period: str
     research_evolution: str
-    
-
 
 class ResearchAgent:
     def __init__(self):
-        self.keyword_extractor = KeyBERT()
         self.ollama_host = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
         self.workflow = self._create_workflow()
 
-    def _call_ollama(self, prompt: str) -> str:
+    async def _call_ollama(self, prompt: str) -> str:
         """Call Ollama API with the given prompt."""
-        response = requests.post(
-            f"{self.ollama_host}/api/generate",
-            json={
-                "model": "mistral:7b",
-                "prompt": prompt,
-                "stream": False
-            }
-        )
-        response.raise_for_status()
-        return response.json()["response"]
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.ollama_host}/api/generate",
+                json={
+                    "model": "mistral:7b", 
+                    "prompt": prompt,
+                    "stream": False
+                }
+            ) as response:
+                response.raise_for_status()
+                result = await response.json()
+                return result["response"]
 
     def _create_workflow(self) -> StateGraph:
         """
@@ -156,25 +153,90 @@ class ResearchAgent:
         all_keywords = []
 
         for paper in papers:
-            # Extract keywords from title and abstract
-            text = f"{paper['title']} {paper['abstract']}"
-            keywords = self.keyword_extractor.extract_keywords(text, 
-                                                            keyphrase_ngram_range=(1, 2),
-                                                            stop_words='english',
-                                                            top_n=15)
-            
-            # Normalize and cluster similar keywords
-            extracted_keywords = [k[0] for k in keywords]
-            clusters = self._cluster_similar_keywords(extracted_keywords)
-            
-            # Use representative keywords
-            paper["keywords"] = list(clusters.keys())
+            # Create a prompt for LLM-based keyword extraction
+            prompt = f"""Analyze the given research paper and extract up to 10 most relevant keywords/keyphrases that represent the following aspects:
+* Research methodology and approaches
+* Core technical concepts and technologies
+* Application domains and use cases
+* Key findings or contributions
+
+Paper Details:
+Title: {paper['title']}
+Abstract: {paper['abstract']}
+
+Requirements:
+* Extract only the most significant keywords/keyphrases (max 10).
+* Each keyword/keyphrase should be ≤5 words.
+* Normalize variations (e.g., "ML" and "machine learning" → "machine learning"; "API" and "APIs" → "API").
+* Output format: Return only a comma-separated list (no numbering, no categories).
+
+Example good response: "machine learning, natural language processing, sentiment analysis"
+Example bad response: "1. Methodology: machine learning, 2. Technology: natural language processing"
+"""
+            # Extract keywords using LLM
+            keywords_text = self._call_ollama(prompt)
+            # Split and clean the keywords
+            paper["keywords"] = [k.strip() for k in keywords_text.split(',') if k.strip()]
             all_keywords.extend(paper["keywords"])
 
-        # Get top keywords after clustering
+        # Get top keywords based on frequency
         keyword_freq = Counter(all_keywords)
         state["top_keywords"] = [k for k, _ in keyword_freq.most_common(10)]
         return state
+
+    # async def _analyze_trends(self, state: State) -> State:
+    #     papers = state["papers"]
+    #     top_keywords = state["top_keywords"]
+
+    #     # Create a DataFrame for temporal analysis
+    #     df = pd.DataFrame(papers)
+    #     df["published_date"] = pd.to_datetime(df["published_date"])
+    #     df = df.sort_values("published_date")
+
+    #     # Create a prompt for LLM-based trend analysis
+    #     trends = []
+    #     for keyword in top_keywords:
+    #         # Format papers information
+    #         papers_info = []
+    #         for paper in papers:
+    #             paper_info = (
+    #                 f"Date: {paper['published_date'].strftime('%Y-%m')}\n"
+    #                 f"Title: {paper['title']}\n"
+    #                 f"Keywords: {', '.join(paper['keywords'])}"
+    #             )
+    #             papers_info.append(paper_info)
+            
+    #         papers_text = "\n\n".join(papers_info)
+            
+    #         prompt = (
+    #             f"Analyze the presence and evolution of the keyword '{keyword}' in these research papers.\n"
+    #             f"Consider semantic variations and related concepts.\n\n"
+    #             f"Papers (in chronological order):\n"
+    #             f"{papers_text}\n\n"
+    #             f"For each month, determine if the paper significantly involves the concept of '{keyword}' "
+    #             f"(considering semantic variations).\n"
+    #             f"Return the analysis as a comma-separated list of 1 (relevant) or 0 (not relevant) for each month."
+    #         )
+
+    #         # Get relevance scores from LLM
+    #         relevance_text = self._call_ollama(prompt)
+    #         frequency = [int(x.strip()) for x in relevance_text.split(',') if x.strip().isdigit()]
+            
+    #         # Ensure we have the correct number of months
+    #         monthly_dates = df["published_date"].dt.strftime("%Y-%m").unique().tolist()
+    #         if len(frequency) > len(monthly_dates):
+    #             frequency = frequency[:len(monthly_dates)]
+    #         elif len(frequency) < len(monthly_dates):
+    #             frequency.extend([0] * (len(monthly_dates) - len(frequency)))
+
+    #         trends.append({
+    #             "keyword": keyword,
+    #             "frequency": frequency,
+    #             "timestamps": monthly_dates
+    #         })
+
+    #     state["keyword_trends"] = trends
+    #     return state
 
     async def _analyze_trends(self, state: State) -> State:
         papers = state["papers"]
@@ -188,11 +250,8 @@ class ResearchAgent:
         # Calculate trends for each keyword
         trends = []
         for main_keyword in top_keywords:
-            freq = []
-            timestamps = []
-            
             # Group by month and count keyword occurrences, including similar keywords
-            monthly_counts = df.set_index("published_date").resample("M").apply(
+            monthly_counts = df.set_index("published_date").resample("ME").apply(
                 lambda x: sum(
                     any(self._are_keywords_similar(main_keyword, k) for k in paper)
                     for paper in x["keywords"]
@@ -218,21 +277,26 @@ class ResearchAgent:
         df["year"] = df["published_date"].dt.year
         yearly_abstracts = df.groupby("year")["abstract"].agg(list).to_dict()
 
+        # Format yearly abstracts
+        yearly_texts = []
+        for year, abstracts in yearly_abstracts.items():
+            year_text = f"Year {year}:\n" + "\n".join(abstracts[:3])
+            yearly_texts.append(year_text)
+        
+        all_years_text = "\n\n".join(yearly_texts)
+
         # Create a prompt for research evolution analysis
-        evolution_prompt = f"""Analyze how the research direction has evolved over time for the topic: {state['topic']}
-
-        Here are the abstracts grouped by year:
-
-        {chr(10).join(f"Year {year}:{chr(10)}{chr(10).join(abstracts[:3])}" for year, abstracts in yearly_abstracts.items())}
-
-        Please provide a comprehensive analysis of how the research focus and approaches have evolved over time. Consider:
-        1. Major shifts in research methodology
-        2. New techniques or approaches introduced
-        3. Changes in the scope or application areas
-        4. Emerging challenges or opportunities addressed
-
-        Format the response with clear numbering (1. 2. 3.) and line breaks between points.
-        """
+        evolution_prompt = (
+            f"Analyze how the research direction has evolved over time for the topic: {state['topic']}\n\n"
+            f"Here are the abstracts grouped by year:\n\n"
+            f"{all_years_text}\n\n"
+            f"Please provide a comprehensive analysis of how the research focus and approaches have evolved over time. Consider:\n"
+            f"1. Major shifts in research methodology\n"
+            f"2. New techniques or approaches introduced\n"
+            f"3. Changes in the scope or application areas\n"
+            f"4. Emerging challenges or opportunities addressed\n\n"
+            f"Format the response with clear numbering (1. 2. 3.) and line breaks between points."
+        )
 
         evolution_summary = self._call_ollama(evolution_prompt)
         state["research_evolution"] = evolution_summary
