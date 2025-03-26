@@ -1,15 +1,37 @@
 import os
-import aiohttp
-from typing import Dict, List
+import logging
+import time
+import functools
+from typing import Dict, List, Callable, Any
 from datetime import datetime
 import arxiv
 import pandas as pd
+import httpx
 from collections import Counter
-from langgraph.graph import StateGraph
+from langgraph.graph import StateGraph, END
 from typing_extensions import TypedDict
 from itertools import combinations
-import re
 
+
+logger = logging.getLogger(__name__)
+
+def timer(func: Callable) -> Callable:
+    """Decorator to measure and log function execution time."""
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs) -> Any:
+        start_time = time.time()
+        result = await func(*args, **kwargs)
+        end_time = time.time()
+        execution_time = end_time - start_time
+        
+        # Get the number of papers if available
+        papers_count = len(result.get("papers", [])) if isinstance(result, dict) else 0
+        
+        logger.info(
+            f"Function {func.__name__} took {execution_time:.2f} seconds to process {papers_count} papers"
+        )
+        return result
+    return wrapper
 
 class State(TypedDict):
     topic: str
@@ -26,21 +48,22 @@ class ResearchAgent:
     def __init__(self):
         self.ollama_host = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
         self.workflow = self._create_workflow()
-
+    
     async def _call_ollama(self, prompt: str) -> str:
         """Call Ollama API with the given prompt."""
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
+        async with httpx.AsyncClient(timeout=30) as client:
+            # httpx default to timeout is 5 seconds, which is too short for llm call, extend it to 30 seconds.
+            response = await client.post(
                 f"{self.ollama_host}/api/generate",
                 json={
-                    "model": "mistral:7b", 
+                    "model": "mistral:7b",
                     "prompt": prompt,
                     "stream": False
                 }
-            ) as response:
-                response.raise_for_status()
-                result = await response.json()
-                return result["response"]
+            )
+            logger.debug(f"Response: {response.json()}")
+            response.raise_for_status()
+            return response.json()["response"]
 
     def _create_workflow(self) -> StateGraph:
         """
@@ -64,6 +87,9 @@ class ResearchAgent:
         workflow.add_edge("analyze_trends", "analyze_evolution")
         workflow.add_edge("analyze_evolution", "generate_summary")
 
+        # Set the entry and exit points
+        workflow.set_entry_point("fetch_papers")
+        workflow.set_finish_point("generate_summary")
         # Set the entry and exit points
         workflow.set_entry_point("fetch_papers")
         workflow.set_finish_point("generate_summary")
@@ -174,7 +200,7 @@ Example good response: "machine learning, natural language processing, sentiment
 Example bad response: "1. Methodology: machine learning, 2. Technology: natural language processing"
 """
             # Extract keywords using LLM
-            keywords_text = self._call_ollama(prompt)
+            keywords_text = await self._call_ollama(prompt)
             # Split and clean the keywords
             paper["keywords"] = [k.strip() for k in keywords_text.split(',') if k.strip()]
             all_keywords.extend(paper["keywords"])
@@ -219,7 +245,7 @@ Example bad response: "1. Methodology: machine learning, 2. Technology: natural 
     #         )
 
     #         # Get relevance scores from LLM
-    #         relevance_text = self._call_ollama(prompt)
+    #         relevance_text = await self._call_ollama(prompt)
     #         frequency = [int(x.strip()) for x in relevance_text.split(',') if x.strip().isdigit()]
             
     #         # Ensure we have the correct number of months
@@ -298,7 +324,7 @@ Example bad response: "1. Methodology: machine learning, 2. Technology: natural 
             f"Format the response with clear numbering (1. 2. 3.) and line breaks between points."
         )
 
-        evolution_summary = self._call_ollama(evolution_prompt)
+        evolution_summary = await self._call_ollama(evolution_prompt)
         state["research_evolution"] = evolution_summary
         return state
 
@@ -323,12 +349,13 @@ Example bad response: "1. Methodology: machine learning, 2. Technology: natural 
         Format the response with clear numbering (1. 2. 3.) and line breaks between points.
         """
 
-        summary = self._call_ollama(prompt)
+        summary = await self._call_ollama(prompt)
         state["trend_summary"] = summary
         state["time_period"] = f"{state['keyword_trends'][0]['timestamps'][0]} to {state['keyword_trends'][0]['timestamps'][-1]}"
         
         return state
 
+    @timer
     async def analyze_topic(self, topic: str, start_date: datetime = None, 
                           end_date: datetime = None, max_papers: int = 100) -> State:
         initial_state = {
@@ -339,7 +366,6 @@ Example bad response: "1. Methodology: machine learning, 2. Technology: natural 
         }
 
         final_state = await self.workflow.ainvoke(initial_state)
-        
         return {
             "topic": topic,
             "total_papers": len(final_state["papers"]),

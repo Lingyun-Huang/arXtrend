@@ -4,6 +4,10 @@ import uvicorn
 
 from app.agents.research_agent import ResearchAgent
 from app.models.research_request import ResearchRequest, ResearchResponse
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="arXtrend API", description="AI Research Trend Analysis API")
 
